@@ -1,0 +1,5 @@
+__pycache__/
+*.pyc
+*.backup-*
+*.bak*
+*.log

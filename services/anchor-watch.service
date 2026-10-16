@@ -1,0 +1,16 @@
+[Unit]
+Description=Anchor watch (circle around the anchor point, alarm + Telegram)
+After=network-online.target signalk.service
+
+[Service]
+User=pi
+ExecStart=/usr/bin/python3 /home/pi/anchor-watch.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+
+# Exodus Radar - Copyright 2026 Sailing Exodus (https://sailingexodus.net)
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+# Free to use on your own boat and for any non-commercial purpose. Want to use it in something you sell? Just ask: https://sailingexodus.net

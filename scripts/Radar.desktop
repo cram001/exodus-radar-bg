@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Radar
+Comment=Working radar display off the Quantum - a second opinion, not the ship's radar
+Exec=/home/pi/radar-display.sh
+Icon=/usr/share/icons/hicolor/48x48/apps/opencpn.png
+Terminal=false
+Categories=Network;
+
+# Exodus Radar - Copyright 2026 Sailing Exodus (https://sailingexodus.net)
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+# Free to use on your own boat and for any non-commercial purpose. Want to use it in something you sell? Just ask: https://sailingexodus.net

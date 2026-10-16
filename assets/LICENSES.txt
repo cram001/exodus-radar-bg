@@ -1,0 +1,2 @@
+PirataOne.ttf - Pirata One, Google Fonts, SIL Open Font License 1.1 (used for the EXODUS title). Full text and copyright: OFL.txt in this folder. The font stays under the OFL, not under this project's license.
+The Exodus mark is built into radar-display.py (greyscale, 320 px); see the notice at the top of each file.

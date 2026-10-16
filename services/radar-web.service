@@ -1,0 +1,12 @@
+[Unit]
+Description=Exodus Radar browser version (page + radar controls + anchor watch) on port 8480
+After=network-online.target mayara.service
+
+[Service]
+User=pi
+ExecStart=/usr/bin/python3 /home/pi/exodus-radar/radar-web-api.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

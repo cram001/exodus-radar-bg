@@ -1,0 +1,19 @@
+[Unit]
+Description=Secondary address on the Raymarine radar network (198.18.0.0/16)
+Documentation=without this the Pi has no route to the radar and cannot control it
+After=network-online.target
+Wants=network-online.target
+Before=mayara.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/sbin/ip addr replace 198.18.9.200/16 dev eth0
+ExecStop=/sbin/ip addr del 198.18.9.200/16 dev eth0
+
+[Install]
+WantedBy=multi-user.target
+
+# Exodus Radar - Copyright 2026 Sailing Exodus (https://sailingexodus.net)
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+# Free to use on your own boat and for any non-commercial purpose. Want to use it in something you sell? Just ask: https://sailingexodus.net

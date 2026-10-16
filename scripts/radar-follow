@@ -1,0 +1,77 @@
+#!/bin/bash
+# Exodus Radar - Copyright 2026 Sailing Exodus (https://sailingexodus.net)
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+# Free to use on your own boat and for any non-commercial purpose. Want to use it in something you sell? Just ask: https://sailingexodus.net
+# Restart OpenCPN when the radar changes its network address.
+#
+# WHY THIS IS NEEDED. radar_pi works out where the radar is when the plugin
+# STARTS, and never revisits it. So if the radar's address changes underneath a
+# running OpenCPN - which happens every single time an Axiom is switched on or
+# off, because that changes who hands out addresses - OpenCPN can still HEAR the
+# radar (the picture is multicast) but can no longer TALK to it. The symptom is
+# maddening and misleading: the radar window looks alive, shows "Standby", and
+# the Start/Stop button does nothing at all. Proved on the wire 17 Aug 2026:
+# 85 packets captured during a button press, every one FROM the radar, none back.
+#
+# A restart rebuilds the command path and everything works. This just does that
+# for him, at the only moment it is needed.
+#
+# DELIBERATELY CONSERVATIVE: it restarts ONLY when the address genuinely changes,
+# never on a blip. Losing sight of the radar (asleep, powered down, breaker off)
+# is NOT a change and is ignored - otherwise turning the radar off would bounce
+# OpenCPN for no reason.
+
+MAC=00:00:00:00:00:00        # YOUR Quantum radome MAC - find it with: ip neigh show dev eth1
+IFACE=eth1
+LOG=/home/pi/radar-net.log
+MIN_GAP=120                  # never restart OpenCPN more often than this
+
+log() { printf '%s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*" >> "$LOG"; }
+
+current_ip() {
+    # Three packets is plenty - the radome is chatty when it is awake at all.
+    timeout 20 tcpdump -i "$IFACE" -n -c 3 "ether src $MAC" 2>/dev/null \
+        | grep -oE 'IP ([0-9]{1,3}\.){3}[0-9]{1,3}' | head -1 | awk '{print $2}'
+}
+
+restart_opencpn() {
+    if ! pgrep -x opencpn >/dev/null; then
+        log "radar moved but OpenCPN is not running - nothing to do"
+        return
+    fi
+    log "restarting OpenCPN so it can command the radar at its new address"
+    # SIGKILL on purpose: a clean exit makes OpenCPN rewrite opencpn.conf, and
+    # the launcher treats a clean exit as "closed deliberately" and will not
+    # bring it back.
+    kill -9 "$(pgrep -x opencpn)" 2>/dev/null
+}
+
+log "radar-follow started - watching for the radar to change address"
+LAST=""
+LAST_RESTART=0
+
+while true; do
+    IP=$(current_ip)
+
+    if [ -n "$IP" ]; then
+        if [ -z "$LAST" ]; then
+            log "radar is at $IP"
+            LAST="$IP"
+        elif [ "$IP" != "$LAST" ]; then
+            log "radar moved: $LAST -> $IP"
+            NOW=$(date +%s)
+            if [ $((NOW - LAST_RESTART)) -ge "$MIN_GAP" ]; then
+                sleep 10          # let it settle before we rebuild against it
+                restart_opencpn
+                LAST_RESTART=$(date +%s)
+            else
+                log "  (too soon after the last restart - leaving it)"
+            fi
+            LAST="$IP"
+        fi
+    fi
+    # If IP is empty the radar is simply off or asleep. Keep the last known
+    # address so that waking up at the SAME address is not treated as a move.
+
+    sleep 30
+done

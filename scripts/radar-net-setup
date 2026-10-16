@@ -1,0 +1,77 @@
+#!/bin/bash
+# Exodus Radar - Copyright 2026 Sailing Exodus (https://sailingexodus.net)
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+# Free to use on your own boat and for any non-commercial purpose. Want to use it in something you sell? Just ask: https://sailingexodus.net
+# Give the Pi a foot on the Raymarine network, with the Pi as the DHCP server,
+# so the Quantum radar works WITHOUT the Axiom being switched on.
+#
+# WHY THIS IS NEEDED. The radar takes its IP address from a DHCP server. Normally
+# that server is the Axiom, which is why the radar vanishes when the Axiom is off:
+# no address, no ARP, nothing to find. The RNS-5 is a SWITCH - it hands out no
+# addresses at all. So something else has to do it, and the Pi can.
+#
+# WHY NOT WIFI. The radar does broadcast its own wifi AP, and we spent a session
+# failing to join it. That road is closed for a different reason than we thought:
+# radar_pi supports ETHERNET-connected Quantums only. Wifi is not implemented.
+# Do not spend more time on the wifi.
+#
+# WHAT YOU NEED FIRST: a USB ethernet adapter, Pi to the RNS-5. The Pi's built-in
+# port (eth0) is already the boat LAN and must stay that way. Any cheap adapter
+# works; ones on the Realtek RTL8153 chip are the safest bet on a Pi.
+#
+# WHAT THIS DOES: finds the new adapter, and puts it in NetworkManager's "shared"
+# mode - which runs a DHCP server on that port and nothing else. It does NOT
+# bridge to the boat LAN, so nothing leaks between the two networks and no
+# broadcast storm can take the boat's own network down.
+#
+# THE ONE TRAP - TWO DHCP SERVERS. When the Axiom IS switched on it also serves
+# DHCP, and two on one network fight. Raymarine's own answer, per the radar_pi
+# manual: turn the Axiom's DHCP server off in its Diagnose menu. Do that before
+# running both at once.
+
+set -e
+
+echo "Looking for a USB ethernet adapter..."
+
+# eth0 is the boat LAN. Anything else wired is the new one.
+NEW=""
+for i in /sys/class/net/*; do
+    n=$(basename "$i")
+    case "$n" in
+        eth0|lo|can*|wlan*|tailscale*|docker*) continue ;;
+    esac
+    [ -e "$i/device" ] || continue
+    # Wired means no wireless directory.
+    [ -d "$i/wireless" ] && continue
+    NEW="$n"
+done
+
+if [ -z "$NEW" ]; then
+    echo
+    echo "No second wired adapter found."
+    echo "Plug the USB ethernet adapter in, connect it to the RNS-5, and run this"
+    echo "again. Present wired interfaces:"
+    ip -br link show type ether | sed 's/^/    /'
+    exit 1
+fi
+
+echo "Found: $NEW"
+echo "Setting it up as its own little network with the Pi serving addresses."
+
+nmcli con delete radar-net 2>/dev/null || true
+nmcli con add type ethernet ifname "$NEW" con-name radar-net \
+      ipv4.method shared ipv6.method ignore connection.autoconnect yes
+nmcli con up radar-net
+
+echo
+ip -br addr show "$NEW"
+echo
+echo "Done. Now:"
+echo "  1. Power the radar (it does NOT need the Axiom on)."
+echo "  2. Give it a minute to ask for an address, then check it appeared:"
+echo "       ip neigh show dev $NEW"
+echo "  3. In OpenCPN open the Radar plugin - it should stop 'searching' and"
+echo "     find the radome on its own."
+echo
+echo "If the Axiom is ALSO on, turn OFF its DHCP server in the Diagnose menu"
+echo "first, or the two will fight over handing out addresses."

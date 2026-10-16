@@ -1,0 +1,118 @@
+#!/bin/bash
+# Exodus Radar - Copyright 2026 Sailing Exodus (https://sailingexodus.net)
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+# Free to use on your own boat and for any non-commercial purpose. Want to use it in something you sell? Just ask: https://sailingexodus.net
+# Makes sure there is NEVER more than one DHCP server on the radar network, and
+# that the Pi takes over the moment the Axiom stops doing it.
+#
+# THE RULE: the Pi only ever hands out addresses when nobody else is.
+#   Axiom on   -> Pi is an ordinary client. The Axiom is in charge, exactly as
+#                 Raymarine intended, and nothing on their side is touched.
+#   Axiom off  -> nothing answers, so the Pi serves, and the radar works anyway.
+#                 This is the at-anchor case: Axioms shut down, OpenCPN drives.
+#
+# HOW IT NOTICES, in both directions - and the second half of this was missing
+# until 17 Aug 2026, which would have quietly broken the at-anchor case:
+#   becoming a client:  ask for an address. Getting one means somebody else is
+#                       serving.
+#   Axiom APPEARS:      while serving, watch the wire for any other DHCP reply.
+#                       Caught within seconds.
+#   Axiom DISAPPEARS:   while a client, ping the server that gave us our address.
+#                       Three misses in a row (90 s) and we take over. Waiting for
+#                       the lease to lapse would have meant up to an HOUR with the
+#                       radar unserved - the Axiom hands out 3600 s leases.
+#
+# THE LEASE OVERHANG. A radar keeps an address until it expires, so just after a
+# handover it may still be on the other side's range. To cover that, when the Pi
+# takes over it KEEPS the address the Axiom last gave it as a second, static
+# address. Then it can reach the radar whichever range the radar is currently in.
+# This is a property of the Pi's own interface only - it does not serve, claim or
+# alter anything in Raymarine's addressing. See the standing rule in memory:
+# do not touch the Axiom or the Raymarine network.
+
+IFACE=eth1
+CON=radar-net
+LOG=/home/pi/radar-net.log
+OURIP="${RADAR_NET_IP:-192.168.99.1}"   # the Pi address on the radar-net link; set to match your setup
+
+log() { printf '%s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*" >> "$LOG"; }
+
+dhcp_server() {
+    nmcli -f DHCP4 con show "$CON" 2>/dev/null \
+        | awk -F'= ' '/dhcp_server_identifier/ {print $2; exit}'
+}
+
+have_addr() { ip -4 addr show "$IFACE" 2>/dev/null | grep -q "inet "; }
+
+try_client() {
+    nmcli con mod "$CON" ipv4.method auto ipv4.addresses "" \
+          ipv4.never-default yes ipv4.ignore-auto-dns yes 2>/dev/null
+    nmcli con up "$CON" >/dev/null 2>&1
+    for _ in $(seq 1 12); do
+        sleep 2
+        have_addr && return 0
+    done
+    return 1
+}
+
+become_server() {
+    local keep="$1"
+    # Keep the address the Axiom last gave us alongside our own, so a radar still
+    # holding an Axiom-issued address stays reachable until it re-asks.
+    if [ -n "$keep" ]; then
+        nmcli con mod "$CON" ipv4.method shared ipv4.addresses "$keep" 2>/dev/null
+        log "serving, and holding $keep as well so a not-yet-expired radar stays reachable"
+    else
+        nmcli con mod "$CON" ipv4.method shared ipv4.addresses "" 2>/dev/null
+        log "serving addresses (nothing else is)"
+    fi
+    nmcli con up "$CON" >/dev/null 2>&1
+}
+
+log "guard started on $IFACE"
+
+while true; do
+    # Nothing to do until the cable is live.
+    while [ "$(cat /sys/class/net/$IFACE/carrier 2>/dev/null)" != "1" ]; do
+        sleep 10
+    done
+
+    if try_client; then
+        ADDR=$(ip -4 -br addr show "$IFACE" | awk '{print $3}')
+        SRV=$(dhcp_server)
+        log "client on $ADDR from server ${SRV:-unknown} - staying out of the way"
+
+        # Watch the server. When the Axiom is switched off it stops answering
+        # long before our lease would have lapsed.
+        misses=0
+        while [ "$(cat /sys/class/net/$IFACE/carrier 2>/dev/null)" = "1" ]; do
+            sleep 30
+            [ -z "$SRV" ] && continue
+            if ping -c1 -W2 "$SRV" >/dev/null 2>&1; then
+                misses=0
+            else
+                misses=$((misses + 1))
+                if [ "$misses" -ge 3 ]; then
+                    log "server $SRV gone for 90 s - taking over"
+                    become_server "$ADDR"
+                    break
+                fi
+            fi
+        done
+        # If we broke out to serve, fall through to the watcher below; if the
+        # cable dropped, the outer loop starts again.
+        [ "$misses" -ge 3 ] || continue
+    else
+        become_server ""
+    fi
+
+    # Serving now. Watch for anyone else answering DHCP on this wire - that is an
+    # Axiom waking up. Our own dnsmasq also replies from port 67, so exclude it.
+    timeout 86400 tcpdump -i "$IFACE" -c 1 -n \
+        "udp src port 67 and not src host $OURIP" >/dev/null 2>&1
+
+    if [ $? -eq 0 ]; then
+        log "another DHCP server appeared (an Axiom, most likely) - standing down"
+    fi
+    # Either way, go round again and re-decide from scratch.
+done

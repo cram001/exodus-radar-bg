@@ -1,0 +1,22 @@
+[Unit]
+Description=Mayara radar server (Raymarine Quantum)
+Documentation=https://github.com/MarineYachtRadar/mayara-server
+After=network-online.target signalk.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/mayara
+ExecStart=/home/pi/mayara/mayara-server -i eth0
+Restart=on-failure
+RestartSec=10
+StandardOutput=append:/home/pi/mayara/mayara.log
+StandardError=append:/home/pi/mayara/mayara.log
+
+[Install]
+WantedBy=multi-user.target
+
+# Exodus Radar - Copyright 2026 Sailing Exodus (https://sailingexodus.net)
+# SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+# Free to use on your own boat and for any non-commercial purpose. Want to use it in something you sell? Just ask: https://sailingexodus.net
