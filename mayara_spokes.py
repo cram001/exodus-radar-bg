@@ -44,7 +44,7 @@ def discover(base_url, preferred_id=None):
     """Return (radar id, data, capabilities). Select deterministically."""
     with urllib.request.urlopen(base_url.rstrip("/") + API_PATH, timeout=5) as resp:
         payload = json.load(resp)
-    radars = payload.get("radars", payload)
+    radars = payload.get("radars", payload) if isinstance(payload, dict) else None
     if not isinstance(radars, dict) or not radars:
         raise RuntimeError("Mayara found no radars")
     if preferred_id:
@@ -67,6 +67,10 @@ def spoke_url(base_url, radar_id, info):
     advertised = info.get("spokeDataUrl") or (API_PATH + "/" + radar_id + "/spokes")
     url = urlparse(advertised)
     scheme = "wss" if base.scheme == "https" else "ws"
+    if url.scheme and url.scheme not in ("ws", "wss"):
+        raise ValueError("Unexpected Mayara spoke URL scheme")
+    if not url.path.startswith(API_PATH + "/") or not url.path.endswith("/spokes"):
+        raise ValueError("Unexpected Mayara spoke URL path")
     return urlunparse((scheme, base.netloc, url.path, "", url.query, ""))
 
 
@@ -87,6 +91,7 @@ def run(base_url, on_batch, on_status, preferred_id=None):
                 raise ValueError("Invalid spokesPerRevolution: %r" % naz)
             url = spoke_url(base_url, radar_id, info)
             ws = websocket.create_connection(url, timeout=10, enable_multithread=True)
+            ws.settimeout(None)  # HALO standby produces no echoes; keep the connection open.
             on_status("Mayara connected: %s" % info.get("name", radar_id), "")
             while True:
                 raw = ws.recv()
@@ -104,10 +109,10 @@ def run(base_url, on_batch, on_status, preferred_id=None):
                     on_batch(rows, naz, range_m)
         except Exception as exc:
             on_status("Mayara disconnected", "Mayara: %s" % exc)
-            time.sleep(3)
         finally:
             if ws is not None:
                 try:
                     ws.close()
                 except Exception:
                     pass
+            time.sleep(3)
