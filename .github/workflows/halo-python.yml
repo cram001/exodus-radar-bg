@@ -1,0 +1,25 @@
+name: HALO Python checks
+
+on:
+  push:
+    branches: ["feature/halo20plus-hdmi-mayara"]
+  pull_request:
+    paths:
+      - "mayara_spokes.py"
+      - "radar-display.py"
+      - "test_mayara_spokes.py"
+      - ".github/workflows/halo-python.yml"
+
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: python -m pip install "protobuf>=4.25,<7"
+      - name: Compile Python sources
+        run: python -m py_compile mayara_spokes.py radar-display.py test_mayara_spokes.py
+      - name: Run adapter unit tests
+        run: python -m unittest -v test_mayara_spokes

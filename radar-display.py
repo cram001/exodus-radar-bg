@@ -43,6 +43,8 @@ import time
 import tkinter as tk
 import urllib.request
 
+# Mayara backend is imported lazily, so Quantum installations need no extra packages.
+
 import numpy as np
 from PIL import Image, ImageChops, ImageDraw, ImageFont, ImageTk
 
@@ -766,7 +768,8 @@ AIS_MAX_AGE = 900           # a target not heard for 15 minutes is dropped
 RED = "#ff5a52"
 
 SWELL_FILE = "/home/pi/.swell.json"     # written by whatever estimates swell on your boat; read here, never faked
-cfg = {"range": 0.5, "northup": False, "trails": True, "gain": 24, "ais": True}
+cfg = {"range": 0.5, "northup": False, "trails": True, "gain": 24, "ais": True,
+       "radar_backend": "quantum", "mayara_radar_id": ""}
 try:
     cfg.update(json.load(open(CFG)))
 except Exception:
@@ -875,6 +878,50 @@ def reader():
         if time.time() - t0 >= 1.0:
             state["pps"] = n0 / (time.time() - t0)
             n0, t0 = 0, time.time()
+
+
+
+
+def mayara_reader():
+    """Populate the same PPI array as the legacy Quantum decoder."""
+    global V
+    try:
+        from mayara_spokes import run
+    except ImportError as exc:
+        state["err"] = "Mayara dependencies missing: %s" % exc
+        return
+
+    counts = [0, time.monotonic()]
+
+    def status(message, error):
+        state["joined"] = message
+        state["err"] = error
+        if error:
+            state["pps"] = 0.0
+
+    def batch(rows, naz, range_m):
+        global V
+        if not (0 < range_m <= 200000):
+            return
+        ncell = len(rows[0][1])
+        now = time.time()
+        with lock:
+            if V.shape != (naz, ncell):
+                V = np.zeros((naz, ncell), np.float32)
+            for az, samples in rows:
+                V[az] = np.frombuffer(samples, dtype=np.uint8)
+        state.update(az=rows[-1][0], naz=naz, ncell=ncell, last=now)
+        state["spokes"] += len(rows)
+        # Spoke range is the distance of the last sample (metres).
+        # Always use the actual streamed range for correctly scaled overlays.
+        cfg["range"] = range_m / 1852.0
+        counts[0] += len(rows)
+        delta = time.monotonic() - counts[1]
+        if delta >= 1:
+            state["pps"] = counts[0] / delta
+            counts[:] = [0, time.monotonic()]
+
+    run(MAYARA, batch, status, str(cfg.get("mayara_radar_id") or "") or None)
 
 
 def navloop():
@@ -1179,10 +1226,14 @@ def radarctl_loop():
         try:
             if rc["id"] is None:
                 d = _rc_get("")
-                ids = list((d.get("radars") or {}).keys())
+                radars = d.get("radars", d) if isinstance(d, dict) else {}
+                chosen = str(cfg.get("mayara_radar_id") or "")
+                ids = sorted(radars) if isinstance(radars, dict) else []
+                if chosen:
+                    ids = [chosen] if chosen in radars else []
                 if ids:
                     rc["id"] = ids[0]
-                    rc["name"] = d["radars"][ids[0]].get("name", ids[0])
+                    rc["name"] = radars[ids[0]].get("name", ids[0])
             if rc["id"] is not None:
                 if rc["caps"] is None:
                     _full = _rc_get("/%s/capabilities" % rc["id"])
@@ -1430,6 +1481,8 @@ def rc_update_ui():
     rv = (rc["vals"].get("range") or {}).get("value")
     if rc["ok"] and rv:
         r_nm = float(rv) / 1852.0
+        if cfg.get("radar_backend") == "mayara" and state["last"] and time.time() - state["last"] < 5:
+            r_nm = cfg["range"]  # HALO streamed echo geometry takes precedence.
         if abs(cfg["range"] - r_nm) > 1e-6:
             cfg["range"] = r_nm
             rng_var.set(fmt_rng(r_nm))
@@ -2440,7 +2493,8 @@ def draw():
     root.after(int(1000 / FPS), draw)
 
 
-threading.Thread(target=reader, daemon=True).start()
+threading.Thread(target=mayara_reader if cfg.get("radar_backend") == "mayara" else reader,
+                 daemon=True).start()
 threading.Thread(target=navloop, daemon=True).start()
 threading.Thread(target=aisloop, daemon=True).start()
 threading.Thread(target=radarctl_loop, daemon=True).start()
