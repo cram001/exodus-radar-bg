@@ -1226,10 +1226,14 @@ def radarctl_loop():
         try:
             if rc["id"] is None:
                 d = _rc_get("")
-                ids = list((d.get("radars") or {}).keys())
+                radars = d.get("radars", d) if isinstance(d, dict) else {}
+                chosen = str(cfg.get("mayara_radar_id") or "")
+                ids = sorted(radars) if isinstance(radars, dict) else []
+                if chosen:
+                    ids = [chosen] if chosen in radars else []
                 if ids:
                     rc["id"] = ids[0]
-                    rc["name"] = d["radars"][ids[0]].get("name", ids[0])
+                    rc["name"] = radars[ids[0]].get("name", ids[0])
             if rc["id"] is not None:
                 if rc["caps"] is None:
                     _full = _rc_get("/%s/capabilities" % rc["id"])
@@ -1477,6 +1481,8 @@ def rc_update_ui():
     rv = (rc["vals"].get("range") or {}).get("value")
     if rc["ok"] and rv:
         r_nm = float(rv) / 1852.0
+        if cfg.get("radar_backend") == "mayara" and state["last"] and time.time() - state["last"] < 5:
+            r_nm = cfg["range"]  # HALO streamed echo geometry takes precedence.
         if abs(cfg["range"] - r_nm) > 1e-6:
             cfg["range"] = r_nm
             rng_var.set(fmt_rng(r_nm))
